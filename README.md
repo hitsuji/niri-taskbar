@@ -11,7 +11,7 @@ Buttons can be dragged and dropped to reorder windows: dropping a tiled window
 onto another button moves its whole column to that position (moving it to
 another workspace if required), and dropping a floating window onto a button on
 another workspace moves it to that workspace. Right clicking a button shows a
-menu to [resize the window](#resize-presets).
+menu to [resize](#resize-presets) or close the window.
 
 ![Example screenshot](images/screenshot.png)
 
@@ -126,7 +126,8 @@ expect!
 
 ### Resize presets
 
-Right clicking a button shows a menu of column widths for that window. The
+Right clicking a button shows a menu of column widths for that window, followed
+by an option to close it. The
 `resize_presets` option maps each menu label to a proportion of the working
 area, between 0 (exclusive) and 1. Presets are shown in order of proportion.
 
@@ -146,7 +147,7 @@ area, between 0 (exclusive) and 1. Presets are shown in order of proportion.
 
 If `resize_presets` isn't set, the defaults match the `preset-column-widths` in
 Niri's default configuration: `33%`, `50%`, and `66%`. Setting it to `{}`
-disables the menu.
+leaves only the close option in the menu.
 
 ### Notifications
 

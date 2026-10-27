@@ -158,9 +158,6 @@ impl Button {
 
     fn connect_context_menu(&self, window_id: u64) {
         let presets = self.state.config().resize_presets();
-        if presets.is_empty() {
-            return;
-        }
 
         let menu = gtk::Menu::new();
         for preset in presets {
@@ -175,6 +172,20 @@ impl Button {
             });
             menu.append(&item);
         }
+
+        if !presets.is_empty() {
+            menu.append(&gtk::SeparatorMenuItem::new());
+        }
+
+        let close = gtk::MenuItem::with_label("Close");
+        let state = self.state.clone();
+        close.connect_activate(move |_| {
+            if let Err(e) = state.niri().close_window(window_id) {
+                tracing::warn!(%e, id = window_id, "error trying to close window");
+            }
+        });
+        menu.append(&close);
+
         menu.show_all();
         menu.set_attach_widget(Some(&self.button));
 

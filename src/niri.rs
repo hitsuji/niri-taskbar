@@ -31,6 +31,13 @@ impl Niri {
         reply::typed!(Handled, reply)
     }
 
+    /// Requests that the given window ID should be closed.
+    #[tracing::instrument(level = "TRACE", err)]
+    pub fn close_window(&self, id: u64) -> Result<(), Error> {
+        let reply = request(Request::Action(Action::CloseWindow { id: Some(id) }))?;
+        reply::typed!(Handled, reply)
+    }
+
     /// Moves the column containing the given window to the given 1-based column index, optionally
     /// moving it to another workspace first.
     ///
