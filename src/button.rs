@@ -1,13 +1,22 @@
-use std::{cell::RefCell, fmt::Debug, path::PathBuf};
+use std::{cell::RefCell, fmt::Debug, path::PathBuf, rc::Rc};
 
 use waybar_cffi::gtk::{
-    self as gtk, Border, CssProvider, IconLookupFlags, IconSize, IconTheme, ReliefStyle,
-    StateFlags,
+    self as gtk, Border, CssProvider, DestDefaults, IconLookupFlags, IconSize, IconTheme,
+    ReliefStyle, StateFlags, TargetEntry, TargetFlags, cairo,
+    gdk::{self, DragAction, ModifierType},
     gdk_pixbuf::Pixbuf,
-    prelude::{ButtonExt, CssProviderExt, GdkPixbufExt, IconThemeExt, StyleContextExt, WidgetExt},
+    glib,
+    prelude::*,
 };
 
-use crate::state::State;
+use crate::{
+    niri::Snapshot,
+    reorder::{self, Move, Side},
+    state::State,
+};
+
+/// The drag and drop target used to reorder buttons.
+const DRAG_TARGET: &str = "application/x-niri-taskbar-window";
 
 /// A taskbar button.
 pub struct Button {
@@ -45,7 +54,10 @@ thread_local! {
 impl Button {
     /// Instantiates a new button, including creating a new Gtk button internally.
     #[tracing::instrument(level = "TRACE", fields(app_id = &window.app_id))]
-    pub fn new(state: &State, window: &niri_ipc::Window) -> Self {
+    ///
+    /// `windows` is the latest unfiltered window snapshot, which is used to work out what a drop
+    /// onto this button should do.
+    pub fn new(state: &State, window: &niri_ipc::Window, windows: Rc<RefCell<Snapshot>>) -> Self {
         let state = state.clone();
 
         // Set up the basic image button.
@@ -77,6 +89,8 @@ impl Button {
 
         // Set up our event handlers. It's easier to do this with self already available.
         button.connect_click_handler(window.id);
+        button.connect_context_menu(window.id);
+        button.connect_drag_and_drop(window.id, windows);
         button.connect_size_allocate(icon_path);
 
         button
@@ -140,6 +154,113 @@ impl Button {
                 tracing::warn!(%e, id = window_id, "error trying to activate window");
             }
         });
+    }
+
+    fn connect_context_menu(&self, window_id: u64) {
+        let presets = self.state.config().resize_presets();
+        if presets.is_empty() {
+            return;
+        }
+
+        let menu = gtk::Menu::new();
+        for preset in presets {
+            let item = gtk::MenuItem::with_label(&preset.label);
+            let state = self.state.clone();
+            let proportion = preset.proportion;
+
+            item.connect_activate(move |_| {
+                if let Err(e) = state.niri().set_window_width(window_id, proportion) {
+                    tracing::warn!(%e, id = window_id, proportion, "error trying to resize window");
+                }
+            });
+            menu.append(&item);
+        }
+        menu.show_all();
+        menu.set_attach_widget(Some(&self.button));
+
+        self.button.connect_button_press_event(move |_, event| {
+            if event.button() == gdk::BUTTON_SECONDARY {
+                menu.popup_at_pointer(Some(event));
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+    }
+
+    fn connect_drag_and_drop(&self, window_id: u64, windows: Rc<RefCell<Snapshot>>) {
+        let targets = [TargetEntry::new(DRAG_TARGET, TargetFlags::SAME_APP, 0)];
+        self.button
+            .drag_source_set(ModifierType::BUTTON1_MASK, &targets, DragAction::MOVE);
+        // We don't use DestDefaults::HIGHLIGHT, since we draw our own drop indicator.
+        self.button.drag_dest_set(
+            DestDefaults::MOTION | DestDefaults::DROP,
+            &targets,
+            DragAction::MOVE,
+        );
+
+        self.button.connect_drag_begin(|button, context| {
+            // Use a rendering of the button itself as the drag icon, rather than Gtk's generic one.
+            let (width, height) = (button.allocated_width(), button.allocated_height());
+            let Ok(surface) = cairo::ImageSurface::create(cairo::Format::ARgb32, width, height)
+            else {
+                return;
+            };
+            if let Ok(cr) = cairo::Context::new(&surface) {
+                button.draw(&cr);
+            }
+            surface.set_device_offset(-f64::from(width) / 2.0, -f64::from(height) / 2.0);
+            context.drag_set_icon_surface(&surface);
+        });
+
+        self.button.connect_drag_data_get(move |_, _, data, _, _| {
+            data.set(&data.target(), 8, window_id.to_string().as_bytes());
+        });
+
+        self.button.connect_drag_motion(|button, context, x, _, _| {
+            let is_source = context.drag_get_source_widget().as_ref()
+                == Some(button.upcast_ref::<gtk::Widget>());
+            set_drop_indicator(button, (!is_source).then(|| drop_side(button, x)));
+
+            // DestDefaults::MOTION handles the drag status for us.
+            true
+        });
+
+        self.button.connect_drag_leave(|button, _, _| {
+            set_drop_indicator(button, None);
+        });
+
+        let state = self.state.clone();
+        self.button
+            .connect_drag_data_received(move |button, _, x, _, data, _, _| {
+                set_drop_indicator(button, None);
+
+                let Some(source_id) = std::str::from_utf8(&data.data())
+                    .ok()
+                    .and_then(|id| id.parse::<u64>().ok())
+                else {
+                    tracing::warn!("cannot parse window ID from drop");
+                    return;
+                };
+
+                let side = drop_side(button, x);
+                let planned = reorder::plan_drop(&windows.borrow(), source_id, window_id, side);
+                tracing::debug!(source_id, target_id = window_id, ?side, ?planned, "drop");
+
+                let result = match planned {
+                    Some(Move::Column {
+                        workspace_id,
+                        index,
+                    }) => state.niri().move_column(source_id, workspace_id, index),
+                    Some(Move::Workspace(workspace_id)) => state
+                        .niri()
+                        .move_window_to_workspace(source_id, workspace_id),
+                    None => Ok(()),
+                };
+                if let Err(e) = result {
+                    tracing::warn!(%e, source_id, target_id = window_id, "error trying to move window");
+                }
+            });
     }
 
     #[tracing::instrument(level = "TRACE")]
@@ -260,6 +381,28 @@ impl Button {
             )
             .and_then(|pixbuf| pixbuf.create_surface(0, button.window().as_ref()))
             .map(|surface| gtk::Image::from_surface(Some(&surface)))
+    }
+}
+
+/// Returns which half of the button the given x coordinate is in.
+fn drop_side(button: &gtk::Button, x: i32) -> Side {
+    if x * 2 < button.allocated_width() {
+        Side::Before
+    } else {
+        Side::After
+    }
+}
+
+/// Shows (or hides, with `None`) the indicator for where a drop will land.
+fn set_drop_indicator(button: &gtk::Button, side: Option<Side>) {
+    let context = button.style_context();
+    context.remove_class("drop-before");
+    context.remove_class("drop-after");
+
+    match side {
+        Some(Side::Before) => context.add_class("drop-before"),
+        Some(Side::After) => context.add_class("drop-after"),
+        None => {}
     }
 }
 

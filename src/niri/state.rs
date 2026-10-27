@@ -191,11 +191,12 @@ impl Niri {
             })
             .collect();
         wws.sort_by(|a, b| {
-            // Compare by workspace ID first, then window position, then window ID as a last
-            // fallback.
+            // Compare by workspace ID first, then tiled before floating (since floating windows
+            // have no position), then window position, then window ID as a last fallback.
             a.workspace
                 .idx
                 .cmp(&b.workspace.idx)
+                .then_with(|| a.window.is_floating.cmp(&b.window.is_floating))
                 .then_with(|| {
                     let a_pos = a.window.layout.pos_in_scrolling_layout.unwrap_or_default();
                     let b_pos = b.window.layout.pos_in_scrolling_layout.unwrap_or_default();

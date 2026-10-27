@@ -1,5 +1,7 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry},
+    rc::Rc,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -31,6 +33,7 @@ mod niri;
 mod notify;
 mod output;
 mod process;
+mod reorder;
 mod state;
 
 static TRACING: LazyLock<()> = LazyLock::new(|| {
@@ -86,6 +89,8 @@ struct Instance {
     container: gtk::Box,
     last_snapshot: Option<Snapshot>,
     state: State,
+    /// The latest unfiltered snapshot, shared with the buttons for drag and drop.
+    windows: Rc<RefCell<Snapshot>>,
 }
 
 impl Instance {
@@ -95,6 +100,7 @@ impl Instance {
             container,
             last_snapshot: None,
             state,
+            windows: Default::default(),
         }
     }
 
@@ -364,6 +370,9 @@ impl Instance {
         // We need to track which, if any, windows are no longer present.
         let mut omitted = self.buttons.keys().copied().collect::<BTreeSet<_>>();
 
+        // Update the shared snapshot before any buttons can act on it.
+        self.windows.replace(windows.clone());
+
         for window in windows.iter().filter(|window| {
             filter
                 .lock()
@@ -373,7 +382,7 @@ impl Instance {
             let button = match self.buttons.entry(window.id) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let button = Button::new(&self.state, window);
+                    let button = Button::new(&self.state, window, self.windows.clone());
 
                     // Implicitly adding the button widget to the box as we create it simplifies
                     // reordering, since it means we can just do it as we go.

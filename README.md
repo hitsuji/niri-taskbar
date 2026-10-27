@@ -3,8 +3,15 @@
 This provides a [Waybar][waybar] taskbar for [Niri][niri].
 
 The main shift from the builtin `wlr/taskbar` module is that windows are always
-ordered by workspace index, then window ID (which essentially means that the
-windows are ordered by creation time, at least as of Waybar 0.12.0).
+ordered to match the Niri layout: by workspace index, then column, then tile
+within the column. Floating windows are placed after the tiled windows on their
+workspace.
+
+Buttons can be dragged and dropped to reorder windows: dropping a tiled window
+onto another button moves its whole column to that position (moving it to
+another workspace if required), and dropping a floating window onto a button on
+another workspace moves it to that workspace. Right clicking a button shows a
+menu to [resize the window](#resize-presets).
 
 ![Example screenshot](images/screenshot.png)
 
@@ -29,7 +36,7 @@ distro, let me know and I'll update the README.)
 
 - Rust 1.87.0 or later
 - Niri (with a version corresponding to the version in the `niri-taskbar` crate
-  version; eg `0.4.0+niri-25.11` is specifically for Niri 25.11)
+  version; eg `0.4.0+niri.26.4` is specifically for Niri 26.04)
 - Gtk+ 3 (including the development package on distros that separate those out)
 - Waybar 0.12.0 (or any version that's API compatible with 0.12, which will
   _probably_ include later versions, but I have no actual knowledge there)
@@ -117,6 +124,30 @@ Note that multiple output support is currently experimental, and may have some
 quirks. Please open an issue with your use case if it's not working as you
 expect!
 
+### Resize presets
+
+Right clicking a button shows a menu of column widths for that window. The
+`resize_presets` option maps each menu label to a proportion of the working
+area, between 0 (exclusive) and 1. Presets are shown in order of proportion.
+
+```jsonc
+{
+  "cffi/niri-taskbar": {
+    // other settings
+    "resize_presets": {
+      "25%": 0.25,
+      "50%": 0.5,
+      "75%": 0.75,
+      "Full": 1.0,
+    },
+  },
+}
+```
+
+If `resize_presets` isn't set, the defaults match the `preset-column-widths` in
+Niri's default configuration: `33%`, `50%`, and `66%`. Setting it to `{}`
+disables the menu.
+
 ### Notifications
 
 You can enable the `notifications` configuration option to have the taskbar
@@ -143,6 +174,9 @@ The taskbar uses [the same Gtk styling mechanism as Waybar][style]. The top
 level taskbar element is given the class `.niri-taskbar`, and contains `button`
 elements within it. The only CSS class that is applied by default is the
 `focused` class, which is added to the button for the currently focused window.
+
+While dragging a button, the button under the pointer gains the `.drop-before`
+or `.drop-after` class to show where the window will land.
 
 The default styling assumes a dark background. It provides a basic hover
 effect, and highlights the focused window.

@@ -15,3 +15,12 @@ button.urgent {
 button:hover {
   background: rgba(255, 255, 255, 0.8);
 }
+
+/* Drop indicators while dragging a button to reorder it. */
+button.drop-before {
+  box-shadow: inset 2px 0 0 0 white;
+}
+
+button.drop-after {
+  box-shadow: inset -2px 0 0 0 white;
+}
