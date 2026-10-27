@@ -127,9 +127,9 @@ expect!
 ### Resize presets
 
 Right clicking a button shows a menu of column widths for that window, followed
-by an option to close it. The
-`resize_presets` option maps each menu label to a proportion of the working
-area, between 0 (exclusive) and 1. Presets are shown in order of proportion.
+by an option to close it. The `resize_presets` option maps each menu label to a
+proportion of the working area, between 0 (exclusive) and 1. Presets are shown
+in order of proportion.
 
 ```jsonc
 {
@@ -169,6 +169,18 @@ Configuration wise:
 Highlighted buttons will gain the `.urgent` CSS class. Default styling is
 included, but can be overridden [as described below](#styling).
 
+## Icons
+
+Icons are looked up by the window's app ID, first as an icon name in the
+current icon theme, then via a matching desktop entry. Desktop entries are
+matched by file name, then by their `StartupWMClass` (case insensitively), which
+picks up apps whose desktop files are named differently from their app ID, such
+as snaps (`<snap>_<app>.desktop`). Desktop entries that give an absolute path
+for their `Icon` are also supported.
+
+If an app still shows the fallback icon, check that its app ID (from `niri msg
+windows`) matches either its desktop file name or the `StartupWMClass` in it.
+
 ## Styling
 
 The taskbar uses [the same Gtk styling mechanism as Waybar][style]. The top
@@ -180,7 +192,8 @@ While dragging a button, the button under the pointer gains the `.drop-before`
 or `.drop-after` class to show where the window will land.
 
 The default styling assumes a dark background. It provides a basic hover
-effect, and highlights the focused window.
+effect, highlights the focused window, and draws a white line on the edge of
+the button where a dragged window will be dropped.
 
 For a light background, something like this is likely good:
 
