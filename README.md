@@ -53,6 +53,18 @@ This will give you a shared library module at
 `target/release/libniri_taskbar.so`. Feel free to move that wherever makes
 sense.
 
+### Ubuntu 26.04 package
+
+On Ubuntu 26.04, `scripts/build-deb.sh` builds the module and packages it as a
+`.deb` in `target/debian/`. This needs `dpkg-dev` installed, and refuses to run
+on other releases, as the package dependencies are taken from the build host.
+The package installs the module to `/usr/lib/waybar/libniri_taskbar.so`:
+
+```bash
+$ scripts/build-deb.sh
+$ sudo apt install ./target/debian/waybar-niri-taskbar_*.deb
+```
+
 ## Configuration
 
 This uses the normal configuration for a [CFFI Waybar module][cffi], which in
