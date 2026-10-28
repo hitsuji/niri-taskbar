@@ -5,14 +5,27 @@ use regex::Regex;
 use serde::{Deserialize, Deserializer};
 
 /// The taskbar configuration.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default)]
     apps: HashMap<String, Vec<AppConfig>>,
     #[serde(default)]
     notifications: Notifications,
+    #[serde(
+        default = "default_resize_presets",
+        deserialize_with = "deserialise_resize_presets"
+    )]
+    resize_presets: Vec<ResizePreset>,
     #[serde(default)]
     show_all_outputs: bool,
+}
+
+/// A column width preset offered in the button context menu.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResizePreset {
+    pub label: String,
+    /// The proportion of the working area, in the range (0, 1].
+    pub proportion: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,8 +51,30 @@ impl Default for Notifications {
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            apps: Default::default(),
+            notifications: Default::default(),
+            resize_presets: default_resize_presets(),
+            show_all_outputs: Default::default(),
+        }
+    }
+}
+
 fn default_true() -> bool {
     true
+}
+
+/// The defaults match the `preset-column-widths` in Niri's default configuration.
+fn default_resize_presets() -> Vec<ResizePreset> {
+    [("33%", 1.0 / 3.0), ("50%", 0.5), ("66%", 2.0 / 3.0)]
+        .into_iter()
+        .map(|(label, proportion)| ResizePreset {
+            label: label.to_string(),
+            proportion,
+        })
+        .collect()
 }
 
 impl Config {
@@ -96,6 +131,11 @@ impl Config {
         self.notifications.use_fuzzy_matching
     }
 
+    /// Returns the column width presets, ordered by proportion.
+    pub fn resize_presets(&self) -> &[ResizePreset] {
+        &self.resize_presets
+    }
+
     pub fn show_all_outputs(&self) -> bool {
         self.show_all_outputs
     }
@@ -113,4 +153,69 @@ where
     D: Deserializer<'de>,
 {
     Regex::new(&String::deserialize(de)?).map_err(serde::de::Error::custom)
+}
+
+fn deserialise_resize_presets<'de, D>(de: D) -> Result<Vec<ResizePreset>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(resize_presets_from_map(
+        HashMap::<String, f64>::deserialize(de)?,
+    ))
+}
+
+fn resize_presets_from_map(map: HashMap<String, f64>) -> Vec<ResizePreset> {
+    // JSON objects don't reliably preserve their order, so we sort by proportion instead.
+    map.into_iter()
+        .filter_map(|(label, proportion)| {
+            if proportion > 0.0 && proportion <= 1.0 {
+                Some(ResizePreset { label, proportion })
+            } else {
+                tracing::warn!(
+                    label,
+                    proportion,
+                    "ignoring resize preset outside the range (0, 1]"
+                );
+                None
+            }
+        })
+        .sorted_by(|a, b| {
+            a.proportion
+                .total_cmp(&b.proportion)
+                .then_with(|| a.label.cmp(&b.label))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_presets_are_sorted_and_validated() {
+        let presets = resize_presets_from_map(HashMap::from([
+            ("Full".to_string(), 1.0),
+            ("25%".to_string(), 0.25),
+            ("Bad".to_string(), 1.5),
+            ("Zero".to_string(), 0.0),
+            ("50%".to_string(), 0.5),
+        ]));
+
+        assert_eq!(
+            presets.iter().map(|p| p.label.as_str()).collect_vec(),
+            ["25%", "50%", "Full"]
+        );
+    }
+
+    #[test]
+    fn resize_presets_default_to_niri_defaults() {
+        assert_eq!(
+            Config::default()
+                .resize_presets()
+                .iter()
+                .map(|p| p.label.as_str())
+                .collect_vec(),
+            ["33%", "50%", "66%"]
+        );
+    }
 }

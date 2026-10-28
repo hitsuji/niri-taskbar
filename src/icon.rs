@@ -5,8 +5,9 @@ use std::{
 };
 
 use waybar_cffi::gtk::{
-    gio::DesktopAppInfo,
-    prelude::{AppInfoExt, IconExt},
+    gio::{self, DesktopAppInfo},
+    glib::Cast,
+    prelude::{AppInfoExt, FileExt, IconExt},
 };
 
 /// A cache for taskbar icons.
@@ -53,8 +54,23 @@ fn lookup(id: &str) -> Option<PathBuf> {
         }
     }
 
-    // This is _very_ roughly adapted from the wlr/taskbar module built into Waybar. We don't do
-    // the same startup_wm_class check here for now.
+    // Desktop entries whose file name doesn't match the app ID (eg snaps, which are installed as
+    // `<snap>_<app>.desktop`) can still be matched by StartupWMClass, as wlr/taskbar does.
+    for info in gio::AppInfo::all() {
+        let Ok(info) = info.downcast::<DesktopAppInfo>() else {
+            continue;
+        };
+        if info
+            .startup_wm_class()
+            .is_some_and(|class| class.eq_ignore_ascii_case(id))
+        {
+            if let Some(path) = info.icon_path() {
+                return Some(path);
+            }
+        }
+    }
+
+    // This is _very_ roughly adapted from the wlr/taskbar module built into Waybar.
     let infos = DesktopAppInfo::search(id);
     for possible in infos.into_iter().flatten() {
         if let Some(info) = DesktopAppInfo::new(&possible) {
@@ -109,8 +125,16 @@ trait DesktopAppInfoExt {
 
 impl DesktopAppInfoExt for DesktopAppInfo {
     fn icon_path(&self) -> Option<PathBuf> {
-        self.icon()
-            .and_then(|icon| IconExt::to_string(&icon))
-            .and_then(|name| lookup_icon(&name))
+        let icon = self.icon()?;
+
+        // Desktop entries may specify an absolute path to the icon rather than an icon name.
+        if let Some(path) = icon
+            .downcast_ref::<gio::FileIcon>()
+            .and_then(|icon| icon.file().path())
+        {
+            return Some(path);
+        }
+
+        IconExt::to_string(&icon).and_then(|name| lookup_icon(&name))
     }
 }
